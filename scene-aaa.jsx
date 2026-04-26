@@ -97,7 +97,7 @@ function SceneAAA({ tweaks, active }) {
     scene.background = new THREE.Color(palette.sky[1]);
     const fogD = palette.fogD * (tweaks.fogDensity ?? 1);
     scene.fog = new THREE.FogExp2(palette.fog, fogD);
-    const camera = new THREE.PerspectiveCamera(58, w/h, 0.5, 4500);
+    const camera = new THREE.PerspectiveCamera(52, w/h, 0.5, 4500);
 
     // ────────── Lighting
     scene.add(new THREE.HemisphereLight(palette.hemiSky, palette.hemiGr, palette.amb));
@@ -216,6 +216,49 @@ function SceneAAA({ tweaks, active }) {
     terrGeo.setAttribute('color', new THREE.BufferAttribute(tcol, 3));
     terrGeo.computeVertexNormals();
     const terrMat = new THREE.MeshStandardMaterial({ vertexColors:true, roughness:0.95, metalness:0.0 });
+    // Inject custom noise into the standard material for surface micro-detail
+    terrMat.onBeforeCompile = (shader) => {
+      shader.uniforms.uTime = { value: 0 };
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <common>',
+        `#include <common>
+         varying vec3 vWorldPos;`
+      );
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <fog_vertex>',
+        `#include <fog_vertex>
+         vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;`
+      );
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <common>',
+        `#include <common>
+         varying vec3 vWorldPos;
+         float terrHash(vec2 p) {
+           return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+         }
+         float terrNoise(vec2 p) {
+           vec2 i = floor(p), f = fract(p);
+           float a = terrHash(i), b = terrHash(i + vec2(1.0, 0.0));
+           float c = terrHash(i + vec2(0.0, 1.0)), d = terrHash(i + vec2(1.0, 1.0));
+           vec2 u = f*f*(3.0-2.0*f);
+           return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+         }`
+      );
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+         // Multi-octave noise for surface variation
+         float n = 0.0;
+         n += terrNoise(vWorldPos.xz * 0.8) * 0.5;
+         n += terrNoise(vWorldPos.xz * 3.2) * 0.25;
+         n += terrNoise(vWorldPos.xz * 12.0) * 0.15;
+         // Vary brightness and slight hue shift
+         diffuseColor.rgb *= (0.78 + n * 0.45);
+         // Tiny rocks/dirt specks
+         float specks = step(0.93, terrNoise(vWorldPos.xz * 25.0));
+         diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.18, 0.14, 0.10), specks * 0.4);`
+      );
+    };
     const terrain = new THREE.Mesh(terrGeo, terrMat);
     terrain.receiveShadow = true;
     scene.add(terrain);
@@ -955,11 +998,10 @@ function SceneAAA({ tweaks, active }) {
     // ────────── FLAGS / CLOTH — long banners on poles, waving
     const flagGroup = new THREE.Group();
     const flagPositions = [
-      [HERO_X+9,  HERO_Z+6 ],
-      [HERO_X-7,  HERO_Z+9 ],
-      [HERO_X+12, HERO_Z-8 ],
+      [HERO_X+11, HERO_Z+8 ],
+      [HERO_X-9,  HERO_Z+11],
     ];
-    const flagColors = [0xc44a3a, 0xd9a44a, 0x4a6ec4];
+    const flagColors = [0xc44a3a, 0xd9a44a];
     const flags = [];
     flagPositions.forEach((pos, k) => {
       const [fx, fz] = pos;
@@ -1305,7 +1347,7 @@ function SceneAAA({ tweaks, active }) {
     scene.add(player);
 
     // ────────── Camera rig (TPS, slightly low angle for scale)
-    const camRig = { yaw: Math.PI*0.1, pitch: -0.10, dist: 11, vy: 0, grounded: true };
+    const camRig = { yaw: Math.PI*0.1, pitch: -0.05, dist: 7.5, vy: 0, grounded: true };
     const updateCam = () => {
       const px = player.position.x, py = player.position.y + 1.7, pz = player.position.z;
       const cx = px + Math.sin(camRig.yaw) * Math.cos(camRig.pitch) * camRig.dist;
@@ -1316,8 +1358,363 @@ function SceneAAA({ tweaks, active }) {
       camera.lookAt(px, py, pz);
     };
 
-    // ────────── Postprocessing disabled (no external deps)
-    let composer = null;
+    // ═══════════════════════════════════════════════════════════════════════
+    // ✨ POSTPROCESSING — Custom multi-pass pipeline (no external deps)
+    // Pipeline: Scene → MainTarget(color+depth) → Bloom → DoF → Composite (grain/vignette/CA/godrays/tonemap)
+    // ═══════════════════════════════════════════════════════════════════════
+    const cinematic = tweaks.cinematic !== false;
+    let composer = null; // marker - we use our own pipeline below
+
+    // Render targets - all at full resolution, half for bloom
+    const rtMain = new THREE.WebGLRenderTarget(w, h, {
+      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+      format: THREE.RGBAFormat, type: THREE.HalfFloatType,
+    });
+    // Depth texture for DoF
+    rtMain.depthTexture = new THREE.DepthTexture(w, h);
+    rtMain.depthTexture.format = THREE.DepthFormat;
+    rtMain.depthTexture.type = THREE.UnsignedShortType;
+
+    const rtBloomA = new THREE.WebGLRenderTarget(Math.floor(w/2), Math.floor(h/2), {
+      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+      format: THREE.RGBAFormat, type: THREE.HalfFloatType,
+    });
+    const rtBloomB = new THREE.WebGLRenderTarget(Math.floor(w/2), Math.floor(h/2), {
+      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+      format: THREE.RGBAFormat, type: THREE.HalfFloatType,
+    });
+    const rtDoF = new THREE.WebGLRenderTarget(w, h, {
+      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+      format: THREE.RGBAFormat, type: THREE.HalfFloatType,
+    });
+
+    // Fullscreen quad geometry
+    const fsQuad = new THREE.BufferGeometry();
+    fsQuad.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+      -1, -1, 0,   3, -1, 0,  -1,  3, 0,
+    ]), 3));
+    fsQuad.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([
+      0, 0,   2, 0,   0, 2,
+    ]), 2));
+
+    // Orthographic camera for fullscreen passes
+    const fsScene = new THREE.Scene();
+    const fsCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    const fsMesh = new THREE.Mesh(fsQuad, new THREE.MeshBasicMaterial());
+    fsScene.add(fsMesh);
+
+    const runPass = (mat, target) => {
+      fsMesh.material = mat;
+      renderer.setRenderTarget(target || null);
+      renderer.render(fsScene, fsCam);
+    };
+
+    // ─── Pass 1: Bloom Threshold (extracts highlights to half-res)
+    const bloomThresholdMat = new THREE.ShaderMaterial({
+      uniforms: {
+        tDiffuse:{value:null},
+        threshold:{value: tod==='night' ? 0.5 : 0.85},
+        soft:{value: 0.4},
+      },
+      vertexShader:`varying vec2 vUv;
+        void main(){ vUv = uv; gl_Position = vec4(position, 1.0); }`,
+      fragmentShader:`
+        uniform sampler2D tDiffuse;
+        uniform float threshold, soft;
+        varying vec2 vUv;
+        void main(){
+          vec4 c = texture2D(tDiffuse, vUv);
+          float lum = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+          float knee = threshold * soft;
+          float bright = max(0.0, lum - threshold + knee) / (knee*2.0 + 0.0001);
+          bright = min(bright * bright, 1.0);
+          gl_FragColor = vec4(c.rgb * bright, 1.0);
+        }`,
+    });
+
+    // ─── Pass 2: Bloom Blur (separable Gaussian, two passes)
+    const bloomBlurMat = (horizontal) => new THREE.ShaderMaterial({
+      uniforms: {
+        tDiffuse:{value:null},
+        resolution:{value: new THREE.Vector2(w/2, h/2)},
+        horizontal:{value: horizontal ? 1 : 0},
+      },
+      vertexShader:`varying vec2 vUv;
+        void main(){ vUv = uv; gl_Position = vec4(position, 1.0); }`,
+      fragmentShader:`
+        uniform sampler2D tDiffuse;
+        uniform vec2 resolution;
+        uniform float horizontal;
+        varying vec2 vUv;
+        void main(){
+          // 9-tap Gaussian
+          float weights[5];
+          weights[0] = 0.227027;
+          weights[1] = 0.1945946;
+          weights[2] = 0.1216216;
+          weights[3] = 0.054054;
+          weights[4] = 0.016216;
+          vec2 texelSize = 1.0 / resolution;
+          vec3 result = texture2D(tDiffuse, vUv).rgb * weights[0];
+          for (int i = 1; i < 5; i++) {
+            vec2 off = (horizontal > 0.5)
+              ? vec2(texelSize.x * float(i) * 1.6, 0.0)
+              : vec2(0.0, texelSize.y * float(i) * 1.6);
+            result += texture2D(tDiffuse, vUv + off).rgb * weights[i];
+            result += texture2D(tDiffuse, vUv - off).rgb * weights[i];
+          }
+          gl_FragColor = vec4(result, 1.0);
+        }`,
+    });
+    const bloomBlurH = bloomBlurMat(true);
+    const bloomBlurV = bloomBlurMat(false);
+
+    // ─── Pass 3: DoF (depth-based circle of confusion blur)
+    const dofMat = new THREE.ShaderMaterial({
+      uniforms: {
+        tDiffuse:{value:null},
+        tDepth:{value:null},
+        resolution:{value: new THREE.Vector2(w, h)},
+        focusDist:{value: 8.0},
+        focusRange:{value: 6.0},
+        bokehSize:{value: 0.012},
+        cameraNear:{value: 0.5},
+        cameraFar:{value: 4500},
+      },
+      vertexShader:`varying vec2 vUv;
+        void main(){ vUv = uv; gl_Position = vec4(position, 1.0); }`,
+      fragmentShader:`
+        uniform sampler2D tDiffuse;
+        uniform sampler2D tDepth;
+        uniform vec2 resolution;
+        uniform float focusDist, focusRange, bokehSize;
+        uniform float cameraNear, cameraFar;
+        varying vec2 vUv;
+        // Linearize depth (perspective)
+        float linearizeDepth(float z) {
+          float zNDC = z * 2.0 - 1.0;
+          return (2.0 * cameraNear * cameraFar) / (cameraFar + cameraNear - zNDC * (cameraFar - cameraNear));
+        }
+        void main(){
+          float depth = texture2D(tDepth, vUv).r;
+          float dist = linearizeDepth(depth);
+          // CoC: 0 in focus, 1 at full blur (only blur far stuff for cinema feel)
+          float coc = clamp((dist - focusDist) / focusRange, 0.0, 1.0);
+          coc = pow(coc, 0.6); // ease curve
+          // Sample disk - 13 taps for budget bokeh
+          vec2 texel = 1.0 / resolution;
+          vec2 r = bokehSize * coc * resolution.y / 1080.0 * vec2(texel.x * resolution.y / resolution.x, texel.y) * 50.0;
+          vec3 col = vec3(0.0);
+          float total = 0.0;
+          // Hexagonal-ish sample pattern
+          const int N = 13;
+          vec2 offsets[13];
+          offsets[0]  = vec2( 0.0,  0.0);
+          offsets[1]  = vec2( 1.0,  0.0);
+          offsets[2]  = vec2(-1.0,  0.0);
+          offsets[3]  = vec2( 0.0,  1.0);
+          offsets[4]  = vec2( 0.0, -1.0);
+          offsets[5]  = vec2( 0.7,  0.7);
+          offsets[6]  = vec2(-0.7,  0.7);
+          offsets[7]  = vec2( 0.7, -0.7);
+          offsets[8]  = vec2(-0.7, -0.7);
+          offsets[9]  = vec2( 0.5,  0.0);
+          offsets[10] = vec2(-0.5,  0.0);
+          offsets[11] = vec2( 0.0,  0.5);
+          offsets[12] = vec2( 0.0, -0.5);
+          for (int i = 0; i < 13; i++) {
+            vec2 off = offsets[i] * r;
+            vec3 s = texture2D(tDiffuse, vUv + off).rgb;
+            col += s;
+            total += 1.0;
+          }
+          col /= total;
+          // Mix in original by CoC strength so foreground stays sharp
+          vec3 sharp = texture2D(tDiffuse, vUv).rgb;
+          gl_FragColor = vec4(mix(sharp, col, coc), 1.0);
+        }`,
+    });
+
+    // ─── Pass 4: Final Composite — Bloom add + Tonemap + ColorGrade + Vignette + CA + Grain + Godrays
+    const compositeMat = new THREE.ShaderMaterial({
+      uniforms: {
+        tDiffuse:{value:null},
+        tBloom:{value:null},
+        tDepth:{value:null},
+        time:{value:0},
+        resolution:{value: new THREE.Vector2(w, h)},
+        sunScreenPos:{value: new THREE.Vector2(0.5, 0.6)},
+        bloomStrength:{value: palette.bloom},
+        warmTint:{value: new THREE.Color(palette.sun).multiplyScalar(1.2)},
+        coolTint:{value: new THREE.Color(palette.hemiSky)},
+        vignetteStrength:{value: 0.45},
+        chromaticAberration:{value: 0.003},
+        grainAmount:{value: 0.05},
+        godrayStrength:{value: tod==='night' ? 0.0 : 0.55},
+        exposure:{value: palette.expo},
+        saturation:{value: 1.10},
+        contrast:{value: 1.08},
+      },
+      vertexShader:`varying vec2 vUv;
+        void main(){ vUv = uv; gl_Position = vec4(position, 1.0); }`,
+      fragmentShader:`
+        uniform sampler2D tDiffuse;
+        uniform sampler2D tBloom;
+        uniform sampler2D tDepth;
+        uniform float time;
+        uniform vec2 resolution;
+        uniform vec2 sunScreenPos;
+        uniform float bloomStrength;
+        uniform vec3 warmTint, coolTint;
+        uniform float vignetteStrength;
+        uniform float chromaticAberration;
+        uniform float grainAmount;
+        uniform float godrayStrength;
+        uniform float exposure, saturation, contrast;
+        varying vec2 vUv;
+
+        // Hash noise
+        float hash(vec2 p) {
+          return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+        }
+
+        // ACES filmic tonemap
+        vec3 aces(vec3 x) {
+          float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
+          return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
+        }
+
+        void main(){
+          vec2 uv = vUv;
+          vec2 center = uv - 0.5;
+
+          // ── Chromatic aberration (radial split)
+          vec2 caOff = center * chromaticAberration;
+          float r = texture2D(tDiffuse, uv - caOff).r;
+          float g = texture2D(tDiffuse, uv).g;
+          float b = texture2D(tDiffuse, uv + caOff).b;
+          vec3 col = vec3(r, g, b);
+
+          // ── Add bloom (already half-res, blurred)
+          vec3 bloom = texture2D(tBloom, uv).rgb;
+          col += bloom * bloomStrength;
+
+          // ── Godrays (radial blur from sun screen position, sky-only)
+          float depth = texture2D(tDepth, uv).r;
+          if (godrayStrength > 0.001) {
+            vec2 toSun = sunScreenPos - uv;
+            vec3 godray = vec3(0.0);
+            float total = 0.0;
+            const int STEPS = 24;
+            for (int i = 0; i < STEPS; i++) {
+              float t = float(i) / float(STEPS);
+              vec2 sUv = uv + toSun * t * 0.55;
+              float sDepth = texture2D(tDepth, sUv).r;
+              // Only sample if pixel is sky (depth ~ 1.0)
+              float skyMask = smoothstep(0.998, 1.0, sDepth);
+              vec3 s = texture2D(tDiffuse, sUv).rgb * skyMask;
+              float w = (1.0 - t);
+              godray += s * w;
+              total += w;
+            }
+            godray /= max(total, 0.001);
+            // Distance from sun fades effect
+            float sunDist = length(toSun);
+            float fade = exp(-sunDist * 1.8);
+            col += godray * godrayStrength * fade;
+          }
+
+          // ── Exposure
+          col *= exposure;
+
+          // ── Tonemap (ACES filmic)
+          col = aces(col);
+
+          // ── Color grade: split-tone (warm highlights, cool shadows)
+          float lum = dot(col, vec3(0.299, 0.587, 0.114));
+          col = mix(col * coolTint * 0.96, col * warmTint, smoothstep(0.20, 0.85, lum));
+
+          // ── Saturation
+          vec3 gray = vec3(dot(col, vec3(0.299, 0.587, 0.114)));
+          col = mix(gray, col, saturation);
+
+          // ── Contrast
+          col = (col - 0.5) * contrast + 0.5;
+
+          // ── Vignette (smooth radial)
+          float vig = 1.0 - dot(center, center) * vignetteStrength * 1.8;
+          vig = clamp(vig, 0.0, 1.0);
+          // Soften the curve
+          vig = pow(vig, 1.4);
+          col *= vig;
+
+          // ── Film grain (animated)
+          float grain = (hash(uv * resolution + time * 60.0) - 0.5) * grainAmount;
+          col += grain;
+
+          // ── Subtle dither to break banding
+          float dither = (hash(uv * resolution + 0.123) - 0.5) / 255.0;
+          col += dither;
+
+          gl_FragColor = vec4(col, 1.0);
+        }`,
+    });
+
+    // Helper to project the sun world position to screen UV (for godrays)
+    const sunWorldPos = new THREE.Vector3();
+    const sunScreenVec = new THREE.Vector3();
+    const updateSunScreen = () => {
+      sunWorldPos.copy(sunDirN).multiplyScalar(800).add(player.position);
+      sunScreenVec.copy(sunWorldPos).project(camera);
+      compositeMat.uniforms.sunScreenPos.value.set(
+        sunScreenVec.x * 0.5 + 0.5,
+        sunScreenVec.y * 0.5 + 0.5,
+      );
+      // Disable godrays when sun is behind camera
+      if (sunScreenVec.z > 1.0) {
+        compositeMat.uniforms.godrayStrength.value = 0.0;
+      } else {
+        compositeMat.uniforms.godrayStrength.value = tod==='night' ? 0.0 : 0.55;
+      }
+    };
+
+    // Override the renderer's rendering function for our pipeline
+    const renderPipeline = () => {
+      if (!cinematic) {
+        renderer.setRenderTarget(null);
+        renderer.render(scene, camera);
+        return;
+      }
+
+      // 1) Render scene to main target (with depth)
+      renderer.setRenderTarget(rtMain);
+      renderer.clear();
+      renderer.render(scene, camera);
+
+      // 2) Bloom: threshold → blur H → blur V (twice for wider bloom)
+      bloomThresholdMat.uniforms.tDiffuse.value = rtMain.texture;
+      runPass(bloomThresholdMat, rtBloomA);
+      bloomBlurH.uniforms.tDiffuse.value = rtBloomA.texture;
+      runPass(bloomBlurH, rtBloomB);
+      bloomBlurV.uniforms.tDiffuse.value = rtBloomB.texture;
+      runPass(bloomBlurV, rtBloomA);
+      // Second bloom blur for wider halo
+      bloomBlurH.uniforms.tDiffuse.value = rtBloomA.texture;
+      runPass(bloomBlurH, rtBloomB);
+      bloomBlurV.uniforms.tDiffuse.value = rtBloomB.texture;
+      runPass(bloomBlurV, rtBloomA);
+
+      // 3) DoF: depth-based blur on main color
+      dofMat.uniforms.tDiffuse.value = rtMain.texture;
+      dofMat.uniforms.tDepth.value = rtMain.depthTexture;
+      runPass(dofMat, rtDoF);
+
+      // 4) Composite final
+      compositeMat.uniforms.tDiffuse.value = rtDoF.texture;
+      compositeMat.uniforms.tBloom.value = rtBloomA.texture;
+      compositeMat.uniforms.tDepth.value = rtMain.depthTexture;
+      runPass(compositeMat, null);
+    };
 
     // ────────── Input
     const move = { f:false, b:false, l:false, r:false, sprint:false };
@@ -1366,8 +1763,18 @@ function SceneAAA({ tweaks, active }) {
     const ro = new ResizeObserver(() => {
       const W = mount.clientWidth, H = mount.clientHeight;
       renderer.setSize(W,H);
-      composer && composer.setSize(W, H);
       camera.aspect = W/H; camera.updateProjectionMatrix();
+      // Resize all render targets for postprocessing
+      rtMain.setSize(W, H);
+      rtMain.depthTexture.image.width = W;
+      rtMain.depthTexture.image.height = H;
+      rtBloomA.setSize(Math.floor(W/2), Math.floor(H/2));
+      rtBloomB.setSize(Math.floor(W/2), Math.floor(H/2));
+      rtDoF.setSize(W, H);
+      bloomBlurH.uniforms.resolution.value.set(W/2, H/2);
+      bloomBlurV.uniforms.resolution.value.set(W/2, H/2);
+      dofMat.uniforms.resolution.value.set(W, H);
+      compositeMat.uniforms.resolution.value.set(W, H);
     });
     ro.observe(mount);
 
@@ -1544,7 +1951,12 @@ function SceneAAA({ tweaks, active }) {
         setAltitude(player.position.y);
       }
 
-      if (composer) composer.render(); else renderer.render(scene, camera);
+      // Update sun screen position for godrays before composite
+      if (cinematic) updateSunScreen();
+      // Animate time uniform for grain
+      if (cinematic) compositeMat.uniforms.time.value = t;
+      // Render with our custom pipeline (or plain if cinematic disabled)
+      renderPipeline();
       raf = requestAnimationFrame(tick);
     };
     tick();
@@ -1560,6 +1972,10 @@ function SceneAAA({ tweaks, active }) {
       window.removeEventListener('keyup', onKU);
       renderer.domElement.removeEventListener('wheel', onWheel);
       renderer.dispose();
+      // Dispose render targets and post-processing materials
+      [rtMain, rtBloomA, rtBloomB, rtDoF].forEach(rt => rt.dispose());
+      [bloomThresholdMat, bloomBlurH, bloomBlurV, dofMat, compositeMat].forEach(m => m.dispose());
+      fsQuad.dispose();
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
       [terrGeo, bladeGeo, petalGeom, birdGeom].forEach(g=>g.dispose());
       M.forEach(L => { L.geom.dispose(); L.mat.dispose(); });
