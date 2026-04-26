@@ -1,5 +1,8 @@
 // scene-aaa.jsx — Cinematic AAA-style stylized fantasy open world
 // 1500m+ scale, 5-layer mountains, hero tree + distant tower, postprocessing, wildlife
+// + Detailed player character (samurai/wanderer with hat, robe, sword, satchel)
+// + Walking & idle animations
+// + Japanese landscape props: cherry blossoms, torii gates, stone lanterns, shrine
 const { useEffect: useEffectAAA, useRef: useRefAAA, useState: useStateAAA } = React;
 
 function SceneAAA({ tweaks, active }) {
@@ -22,6 +25,7 @@ function SceneAAA({ tweaks, active }) {
         sun:0xffd9a8, sunPos:[180, 75, -200], sunInt:1.4,
         amb:0.55, hemiSky:0xfacb9f, hemiGr:0x6a5b40,
         expo:1.05, bloom:0.55, fogD:0.0028,
+        sakura:0xffd0e0, torii:0xc44a3a, lantern:0xe8d8b8,
       },
       noon: {
         sky:[0x3e7fcf, 0xa2cce8, 0xd6e9ee],
@@ -31,6 +35,7 @@ function SceneAAA({ tweaks, active }) {
         sun:0xfffce8, sunPos:[60, 240, -90], sunInt:2.0,
         amb:0.7, hemiSky:0x9ec8e4, hemiGr:0x6e603e,
         expo:1.10, bloom:0.35, fogD:0.0022,
+        sakura:0xffc8dc, torii:0xc44a3a, lantern:0xf0e0c0,
       },
       // ★ HERO PALETTE — Late afternoon, golden warm sun
       afternoon: {
@@ -41,6 +46,7 @@ function SceneAAA({ tweaks, active }) {
         sun:0xffd28a, sunPos:[260, 110, -80], sunInt:1.85,
         amb:0.62, hemiSky:0xc0d8ec, hemiGr:0x6a583a,
         expo:1.08, bloom:0.55, fogD:0.0024,
+        sakura:0xffcad8, torii:0xc44a3a, lantern:0xeacf9c,
       },
       dusk: {
         sky:[0x402a5a, 0xc46d68, 0xf2a070],
@@ -50,6 +56,7 @@ function SceneAAA({ tweaks, active }) {
         sun:0xff9560, sunPos:[300, 28, -60], sunInt:1.6,
         amb:0.5, hemiSky:0x8a5a78, hemiGr:0x4a3624,
         expo:0.96, bloom:0.7, fogD:0.0035,
+        sakura:0xf8b0c8, torii:0xa83828, lantern:0xffb878,
       },
       night: {
         sky:[0x080d1e, 0x1a2244, 0x2a3460],
@@ -59,6 +66,7 @@ function SceneAAA({ tweaks, active }) {
         sun:0xb0c2e8, sunPos:[120, 180, -120], sunInt:0.5,
         amb:0.4, hemiSky:0x2a3458, hemiGr:0x18191e,
         expo:0.7, bloom:0.85, fogD:0.0030,
+        sakura:0xb898b8, torii:0x6a2820, lantern:0xffe090,
       },
     };
     const palette = PALETTES[tod];
@@ -341,6 +349,339 @@ function SceneAAA({ tweaks, active }) {
       }
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // 🌸 SAKURA TREES — Cherry blossoms scattered around the start area
+    // ═══════════════════════════════════════════════════════════════════════
+    const sakuraGroup = new THREE.Group();
+    const sakuraMat = new THREE.MeshStandardMaterial({
+      color: palette.sakura, roughness:0.85, flatShading:true,
+      emissive: palette.sakura, emissiveIntensity: tod==='night' ? 0.15 : 0.05,
+    });
+    const sakuraTrunkMat = new THREE.MeshStandardMaterial({
+      color: 0x3a2a1e, roughness:0.95, flatShading:true,
+    });
+    const SAKURA_POSITIONS = [];
+    for (let i=0; i<8; i++){
+      const ang = Math.random()*Math.PI*2;
+      const r = 35 + Math.random()*60;
+      const sx = startX + Math.cos(ang)*r;
+      const sz = startZ + Math.sin(ang)*r;
+      const sy = heightFn(sx, sz);
+      if (sy < -8 || sy > 25) continue;
+      // avoid hero tree
+      if (Math.hypot(sx - HERO_X, sz - HERO_Z) < 16) continue;
+      SAKURA_POSITIONS.push({x:sx, y:sy, z:sz});
+
+      const tree = new THREE.Group();
+      const trunkH = 6 + Math.random()*3;
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.7, trunkH, 8), sakuraTrunkMat);
+      trunk.position.y = trunkH/2;
+      trunk.castShadow = true;
+      tree.add(trunk);
+      // Twisting branches
+      for (let b=0; b<4; b++){
+        const blen = 2.5 + Math.random()*2;
+        const br = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.25, blen, 6), sakuraTrunkMat);
+        const a = (b/4)*Math.PI*2 + Math.random()*0.5;
+        br.position.set(Math.cos(a)*0.6, trunkH*0.7+Math.random()*1, Math.sin(a)*0.6);
+        br.rotation.z = Math.cos(a)*0.7;
+        br.rotation.x = Math.sin(a)*0.7;
+        br.castShadow = true;
+        tree.add(br);
+      }
+      // Pink blossom canopy — multiple icospheres
+      for (let k=0; k<8; k++){
+        const sz2 = 1.6 + Math.random()*1.4;
+        const blob = new THREE.Mesh(new THREE.IcosahedronGeometry(sz2, 1), sakuraMat);
+        blob.position.set(
+          (Math.random()-0.5)*4,
+          trunkH + 1 + Math.random()*2.5,
+          (Math.random()-0.5)*4,
+        );
+        blob.castShadow = true;
+        tree.add(blob);
+      }
+      tree.position.set(sx, sy, sz);
+      tree.rotation.y = Math.random()*Math.PI*2;
+      sakuraGroup.add(tree);
+    }
+    scene.add(sakuraGroup);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // ⛩️ TORII GATE — Iconic red Japanese gate at scenic viewpoint
+    // ═══════════════════════════════════════════════════════════════════════
+    const buildTorii = (px, pz, scale=1) => {
+      const g = new THREE.Group();
+      const py = heightFn(px, pz);
+      const toriiMat = new THREE.MeshStandardMaterial({
+        color: palette.torii, roughness:0.7, flatShading:true,
+      });
+      const accent = new THREE.MeshStandardMaterial({ color: 0x2a1a14, roughness:0.85 });
+
+      const pillarH = 7 * scale;
+      const pillarR = 0.35 * scale;
+      const span = 4.5 * scale;
+
+      // Two pillars (slightly tapered, slanted outward at base for stability look)
+      [-1, 1].forEach(side => {
+        const pillar = new THREE.Mesh(
+          new THREE.CylinderGeometry(pillarR*0.8, pillarR, pillarH, 10),
+          toriiMat
+        );
+        pillar.position.set(side*span/2, pillarH/2, 0);
+        pillar.castShadow = true;
+        g.add(pillar);
+        // Foot stone
+        const foot = new THREE.Mesh(
+          new THREE.CylinderGeometry(pillarR*1.4, pillarR*1.5, 0.3*scale, 8),
+          accent
+        );
+        foot.position.set(side*span/2, 0.15*scale, 0);
+        g.add(foot);
+      });
+
+      // Lower crossbar (nuki)
+      const nuki = new THREE.Mesh(
+        new THREE.BoxGeometry(span + 0.6*scale, 0.35*scale, 0.5*scale),
+        toriiMat
+      );
+      nuki.position.set(0, pillarH * 0.78, 0);
+      nuki.castShadow = true;
+      g.add(nuki);
+
+      // Upper crossbar (kasagi) — curved, with overhang
+      const kasagi = new THREE.Mesh(
+        new THREE.BoxGeometry(span + 2*scale, 0.5*scale, 0.7*scale),
+        toriiMat
+      );
+      kasagi.position.set(0, pillarH + 0.25*scale, 0);
+      kasagi.castShadow = true;
+      g.add(kasagi);
+
+      // Shimaki (second beam under kasagi)
+      const shimaki = new THREE.Mesh(
+        new THREE.BoxGeometry(span + 1.2*scale, 0.32*scale, 0.55*scale),
+        accent
+      );
+      shimaki.position.set(0, pillarH - 0.1*scale, 0);
+      g.add(shimaki);
+
+      // Curved ends of kasagi (decorative blocks tilted up)
+      [-1, 1].forEach(side => {
+        const end = new THREE.Mesh(
+          new THREE.BoxGeometry(0.8*scale, 0.5*scale, 0.7*scale),
+          toriiMat
+        );
+        end.position.set(side * (span/2 + scale + 0.4*scale), pillarH + 0.45*scale, 0);
+        end.rotation.z = side * 0.18;
+        g.add(end);
+      });
+
+      // Center plaque (gakuzuka)
+      const plaque = new THREE.Mesh(
+        new THREE.BoxGeometry(0.7*scale, 0.7*scale, 0.15*scale),
+        accent
+      );
+      plaque.position.set(0, pillarH * 0.92, 0.32*scale);
+      g.add(plaque);
+
+      g.position.set(px, py, pz);
+      return g;
+    };
+
+    // Place torii on a ridge in front of the player, framing the view
+    const torii1 = buildTorii(startX - 22, startZ - 35, 1.3);
+    torii1.rotation.y = Math.atan2(startX - (startX-22), startZ - (startZ-35));
+    scene.add(torii1);
+
+    // Smaller distant torii
+    const torii2 = buildTorii(startX + 60, startZ - 80, 1.0);
+    torii2.rotation.y = -0.5;
+    scene.add(torii2);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 🏮 STONE LANTERNS (Toro) — Lining a path
+    // ═══════════════════════════════════════════════════════════════════════
+    const lanternGroup = new THREE.Group();
+    const lanternStoneMat = new THREE.MeshStandardMaterial({
+      color: 0x9a8e7c, roughness:0.95, flatShading:true,
+    });
+    const lanternFireMat = new THREE.MeshStandardMaterial({
+      color: palette.lantern, roughness:0.6,
+      emissive: palette.lantern,
+      emissiveIntensity: tod==='night' || tod==='dusk' ? 1.2 : 0.2,
+    });
+    const buildLantern = (px, pz, scale=1) => {
+      const g = new THREE.Group();
+      const py = heightFn(px, pz);
+      // Base
+      const base = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.5*scale, 0.6*scale, 0.4*scale, 8),
+        lanternStoneMat
+      );
+      base.position.y = 0.2*scale;
+      base.castShadow = true;
+      g.add(base);
+      // Pole
+      const pole = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.18*scale, 0.22*scale, 1.3*scale, 6),
+        lanternStoneMat
+      );
+      pole.position.y = 0.4*scale + 0.65*scale;
+      pole.castShadow = true;
+      g.add(pole);
+      // Mid platform
+      const mid = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.45*scale, 0.4*scale, 0.2*scale, 8),
+        lanternStoneMat
+      );
+      mid.position.y = 0.4*scale + 1.3*scale + 0.1*scale;
+      g.add(mid);
+      // Light box (firebox)
+      const box = new THREE.Mesh(
+        new THREE.BoxGeometry(0.7*scale, 0.7*scale, 0.7*scale),
+        lanternFireMat
+      );
+      box.position.y = 0.4*scale + 1.3*scale + 0.2*scale + 0.35*scale;
+      g.add(box);
+      // Roof (pyramid)
+      const roof = new THREE.Mesh(
+        new THREE.ConeGeometry(0.65*scale, 0.4*scale, 4),
+        lanternStoneMat
+      );
+      roof.position.y = 0.4*scale + 1.3*scale + 0.2*scale + 0.7*scale + 0.2*scale;
+      roof.rotation.y = Math.PI/4;
+      roof.castShadow = true;
+      g.add(roof);
+      // Top finial
+      const finial = new THREE.Mesh(
+        new THREE.SphereGeometry(0.12*scale, 8, 6),
+        lanternStoneMat
+      );
+      finial.position.y = 0.4*scale + 1.3*scale + 0.2*scale + 0.7*scale + 0.45*scale;
+      g.add(finial);
+
+      // Add point light for night/dusk
+      if (tod==='night' || tod==='dusk') {
+        const pl = new THREE.PointLight(palette.lantern, tod==='night'?1.2:0.6, 8*scale, 2);
+        pl.position.y = 0.4*scale + 1.3*scale + 0.55*scale;
+        g.add(pl);
+      }
+
+      g.position.set(px, py, pz);
+      return g;
+    };
+
+    // Path of lanterns leading toward the torii
+    const PATH_DIR_X = -22 - 0;
+    const PATH_DIR_Z = -35 - 0;
+    const pathLen = Math.hypot(PATH_DIR_X, PATH_DIR_Z);
+    const numLanterns = 5;
+    for (let i=0; i<numLanterns; i++){
+      const t = (i+1) / (numLanterns+1);
+      const lx = startX + PATH_DIR_X * t;
+      const lz = startZ + PATH_DIR_Z * t;
+      // Offset to side of path (alternate)
+      const sideX = PATH_DIR_Z / pathLen * 2;
+      const sideZ = -PATH_DIR_X / pathLen * 2;
+      const sign = (i%2===0) ? 1 : -1;
+      lanternGroup.add(buildLantern(lx + sideX*sign, lz + sideZ*sign, 1.0));
+    }
+    scene.add(lanternGroup);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // ⛩️ SHRINE (HOKORA) — Small wooden shrine
+    // ═══════════════════════════════════════════════════════════════════════
+    const buildShrine = (px, pz) => {
+      const g = new THREE.Group();
+      const py = heightFn(px, pz);
+      const woodDark = new THREE.MeshStandardMaterial({ color:0x4a3a26, roughness:0.92, flatShading:true });
+      const woodMid = new THREE.MeshStandardMaterial({ color:0x6a5238, roughness:0.88, flatShading:true });
+      const stone = new THREE.MeshStandardMaterial({ color:0x9a8e7c, roughness:0.95, flatShading:true });
+      const roofMat = new THREE.MeshStandardMaterial({ color:0x2a2218, roughness:0.85, flatShading:true });
+
+      // Stone base/platform
+      const baseW = 2.2, baseD = 1.8, baseH = 0.4;
+      const base = new THREE.Mesh(new THREE.BoxGeometry(baseW, baseH, baseD), stone);
+      base.position.y = baseH/2;
+      base.castShadow = true; base.receiveShadow = true;
+      g.add(base);
+
+      // Stairs
+      for (let s=0; s<2; s++){
+        const step = new THREE.Mesh(
+          new THREE.BoxGeometry(baseW*0.55, 0.12, 0.25),
+          stone
+        );
+        step.position.set(0, 0.06 + s*0.12, baseD/2 + 0.12 + s*0.25);
+        g.add(step);
+      }
+
+      // Main shrine box (smaller, on top of base)
+      const shrineW = 1.5, shrineD = 1.2, shrineH = 1.4;
+      const shrine = new THREE.Mesh(
+        new THREE.BoxGeometry(shrineW, shrineH, shrineD),
+        woodDark
+      );
+      shrine.position.y = baseH + shrineH/2;
+      shrine.castShadow = true;
+      g.add(shrine);
+
+      // Front opening (slightly recessed darker box)
+      const opening = new THREE.Mesh(
+        new THREE.BoxGeometry(shrineW*0.5, shrineH*0.7, 0.05),
+        new THREE.MeshStandardMaterial({ color:0x1a1208, roughness:0.95 })
+      );
+      opening.position.set(0, baseH + shrineH/2, shrineD/2 + 0.01);
+      g.add(opening);
+
+      // Sloped roof — two triangular prisms forming a gable
+      const roofW = shrineW + 0.6, roofD = shrineD + 0.5, roofH = 0.7;
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(roofW*0.85, roofH, 4), roofMat);
+      roof.position.y = baseH + shrineH + roofH/2;
+      roof.rotation.y = Math.PI/4;
+      roof.scale.set(1.1, 1, 0.85);
+      roof.castShadow = true;
+      g.add(roof);
+
+      // Roof ridge ornament
+      const ridge = new THREE.Mesh(
+        new THREE.BoxGeometry(roofW*0.7, 0.15, 0.18),
+        woodMid
+      );
+      ridge.position.y = baseH + shrineH + roofH + 0.05;
+      g.add(ridge);
+
+      // Pillars at corners (decorative)
+      [-1, 1].forEach(sx => {
+        [-1, 1].forEach(sz => {
+          const pillar = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.08, 0.09, shrineH+0.1, 6),
+            woodMid
+          );
+          pillar.position.set(sx*shrineW*0.45, baseH + shrineH/2, sz*shrineD*0.45);
+          pillar.castShadow = true;
+          g.add(pillar);
+        });
+      });
+
+      // Small offering (a coin/round stone in front)
+      const offering = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.12, 0.12, 0.03, 12),
+        new THREE.MeshStandardMaterial({ color:0xc8a050, roughness:0.4, metalness:0.7 })
+      );
+      offering.position.set(0, baseH + 0.02, baseD/2 - 0.15);
+      g.add(offering);
+
+      g.position.set(px, py, pz);
+      return g;
+    };
+
+    // Place shrine in a peaceful spot, near sakura
+    const shrine = buildShrine(startX + 28, startZ + 12);
+    shrine.rotation.y = -0.4;
+    scene.add(shrine);
+
     // ────────── Grass (instanced, taller blades, denser near origin)
     const grassCount = tweaks.fpsPreset === 'high' ? 120000 : tweaks.fpsPreset === 'low' ? 22000 : 55000;
     const bladeGeo = new THREE.BufferGeometry();
@@ -546,11 +887,13 @@ function SceneAAA({ tweaks, active }) {
     scene.add(birdGroup);
 
     // ────────── Wildlife: PETALS / LEAVES drifting (high-density particle cloud)
-    const petalCount = tweaks.fpsPreset==='low' ? 60 : tweaks.fpsPreset==='high' ? 220 : 140;
+    // Now using sakura-colored petals!
+    const petalCount = tweaks.fpsPreset==='low' ? 60 : tweaks.fpsPreset==='high' ? 280 : 180;
     const petalGeom = new THREE.PlaneGeometry(0.18, 0.22);
+    // Mix in sakura pink petals for cherry blossom effect
     const petalColors = tod==='night'
-      ? [0xb0c0e0, 0x9aa8c8]
-      : [0xfff2c8, 0xffd8a8, 0xf8c89a, 0xffe6b8];
+      ? [0xb0c0e0, 0x9aa8c8, 0xb898b8]
+      : [0xfff2c8, 0xffd8a8, 0xffcad8, 0xffd0e0, 0xffb8c8];
     const petalMatPool = petalColors.map(c =>
       new THREE.MeshBasicMaterial({ color:c, side:THREE.DoubleSide, transparent:true, opacity:0.92, fog:true }));
     const petals = [];
@@ -674,21 +1017,291 @@ function SceneAAA({ tweaks, active }) {
     });
     scene.add(flagGroup);
 
-    // ────────── Player
+    // ═══════════════════════════════════════════════════════════════════════
+    // 🥷 PLAYER CHARACTER — Detailed wandering samurai/traveler
+    // Hierarchy: root → torso → (head, arms, legs)
+    // All limbs are referenced for animation
+    // ═══════════════════════════════════════════════════════════════════════
     const player = new THREE.Group();
-    const bodyMat = new THREE.MeshLambertMaterial({ color: 0xc8b48a });
-    const cloakMat = new THREE.MeshLambertMaterial({ color: 0x6a3a3a });
-    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.7, 4, 8), cloakMat);
-    body.position.y = 0.7;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 8), bodyMat);
-    head.position.y = 1.25;
-    const hat = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.14, 16), cloakMat);
-    hat.position.y = 1.36;
-    player.add(body); player.add(head); player.add(hat);
-    player.traverse(o => { if (o.isMesh) o.castShadow = true; });
-    // ALWAYS set player y to current ground height so it's never underground
+
+    // Material palette — earth tones, weathered traveler
+    const skinMat   = new THREE.MeshStandardMaterial({ color:0xd9b88c, roughness:0.85, flatShading:true });
+    const robeMat   = new THREE.MeshStandardMaterial({ color:0x6a2820, roughness:0.92, flatShading:true });
+    const innerMat  = new THREE.MeshStandardMaterial({ color:0x3a2218, roughness:0.95, flatShading:true });
+    const beltMat   = new THREE.MeshStandardMaterial({ color:0xc8a050, roughness:0.6,  metalness:0.3, flatShading:true });
+    const pantsMat  = new THREE.MeshStandardMaterial({ color:0x2a2018, roughness:0.95, flatShading:true });
+    const bootMat   = new THREE.MeshStandardMaterial({ color:0x1a1208, roughness:0.95, flatShading:true });
+    const hairMat   = new THREE.MeshStandardMaterial({ color:0x1a1208, roughness:0.85, flatShading:true });
+    const hatMat    = new THREE.MeshStandardMaterial({ color:0xa68458, roughness:0.95, flatShading:true });
+    const swordHilt = new THREE.MeshStandardMaterial({ color:0x2a1a14, roughness:0.85, flatShading:true });
+    const swordSaya = new THREE.MeshStandardMaterial({ color:0x1a2218, roughness:0.7,  metalness:0.2, flatShading:true });
+    const satchelMat= new THREE.MeshStandardMaterial({ color:0x4a3a26, roughness:0.92, flatShading:true });
+
+    // Root pivot at feet
+    // Hip/torso pivot — animations tilt/bob this group
+    const torso = new THREE.Group();
+    torso.position.y = 0.85; // hip height
+    player.add(torso);
+
+    // Torso body (slightly tapered cylinder = robe wrap)
+    const bodyGeo = new THREE.CylinderGeometry(0.28, 0.32, 0.7, 10);
+    const body = new THREE.Mesh(bodyGeo, robeMat);
+    body.position.y = 0.05;
+    body.castShadow = true;
+    torso.add(body);
+
+    // Inner kimono collar (V-shape via small box)
+    const collar = new THREE.Mesh(
+      new THREE.BoxGeometry(0.32, 0.18, 0.05),
+      innerMat
+    );
+    collar.position.set(0, 0.32, 0.27);
+    torso.add(collar);
+
+    // Belt (obi) — bright sash around middle
+    const belt = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.34, 0.34, 0.14, 12),
+      beltMat
+    );
+    belt.position.y = -0.05;
+    belt.castShadow = true;
+    torso.add(belt);
+
+    // Belt knot at back
+    const knot = new THREE.Mesh(
+      new THREE.BoxGeometry(0.18, 0.22, 0.12),
+      beltMat
+    );
+    knot.position.set(0, -0.05, -0.32);
+    knot.rotation.z = 0.2;
+    torso.add(knot);
+
+    // Lower robe (flares slightly outward, longer)
+    const lowerRobe = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.34, 0.42, 0.55, 10),
+      robeMat
+    );
+    lowerRobe.position.y = -0.42;
+    lowerRobe.castShadow = true;
+    torso.add(lowerRobe);
+
+    // ── Neck + Head group
+    const headGroup = new THREE.Group();
+    headGroup.position.y = 0.45; // top of body
+    torso.add(headGroup);
+
+    // Neck
+    const neck = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.1, 0.12, 0.1, 8),
+      skinMat
+    );
+    neck.position.y = 0.05;
+    headGroup.add(neck);
+
+    // Head
+    const head = new THREE.Mesh(
+      new THREE.SphereGeometry(0.18, 14, 10),
+      skinMat
+    );
+    head.position.y = 0.22;
+    head.scale.set(0.95, 1.05, 0.95);
+    head.castShadow = true;
+    headGroup.add(head);
+
+    // Hair (back of head, falls to neck)
+    const hairBack = new THREE.Mesh(
+      new THREE.SphereGeometry(0.19, 12, 8, 0, Math.PI*2, 0, Math.PI*0.6),
+      hairMat
+    );
+    hairBack.position.set(0, 0.22, -0.02);
+    hairBack.scale.set(1, 1.2, 1);
+    headGroup.add(hairBack);
+
+    // Hair tail (small ponytail)
+    const hairTail = new THREE.Mesh(
+      new THREE.ConeGeometry(0.06, 0.18, 6),
+      hairMat
+    );
+    hairTail.position.set(0, 0.18, -0.16);
+    hairTail.rotation.x = 0.4;
+    headGroup.add(hairTail);
+
+    // Eyes (tiny dark dots)
+    const eyeMat = new THREE.MeshBasicMaterial({ color:0x0a0608 });
+    [-1, 1].forEach(side => {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.018, 6, 6), eyeMat);
+      eye.position.set(side*0.06, 0.22, 0.16);
+      headGroup.add(eye);
+    });
+
+    // ── Conical straw hat (kasa) — large, iconic silhouette
+    const hat = new THREE.Mesh(
+      new THREE.ConeGeometry(0.42, 0.25, 16),
+      hatMat
+    );
+    hat.position.y = 0.40;
+    hat.castShadow = true;
+    headGroup.add(hat);
+
+    // Hat brim ring (slight overhang)
+    const brim = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.42, 0.44, 0.04, 16),
+      hatMat
+    );
+    brim.position.y = 0.30;
+    headGroup.add(brim);
+
+    // ── Arms (shoulder pivot groups for animation)
+    const armL = new THREE.Group();
+    armL.position.set(-0.32, 0.32, 0); // left shoulder
+    torso.add(armL);
+
+    // Upper arm (sleeve)
+    const upperArmL = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.09, 0.11, 0.36, 8),
+      robeMat
+    );
+    upperArmL.position.y = -0.18;
+    upperArmL.castShadow = true;
+    armL.add(upperArmL);
+
+    // Forearm + hand
+    const forearmL = new THREE.Group();
+    forearmL.position.y = -0.36;
+    armL.add(forearmL);
+    const sleeveCuffL = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.10, 0.08, 0.28, 8),
+      innerMat
+    );
+    sleeveCuffL.position.y = -0.14;
+    sleeveCuffL.castShadow = true;
+    forearmL.add(sleeveCuffL);
+    const handL = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), skinMat);
+    handL.position.y = -0.30;
+    forearmL.add(handL);
+
+    // Right arm (mirror)
+    const armR = new THREE.Group();
+    armR.position.set(0.32, 0.32, 0);
+    torso.add(armR);
+    const upperArmR = new THREE.Mesh(upperArmL.geometry, robeMat);
+    upperArmR.position.y = -0.18;
+    upperArmR.castShadow = true;
+    armR.add(upperArmR);
+    const forearmR = new THREE.Group();
+    forearmR.position.y = -0.36;
+    armR.add(forearmR);
+    const sleeveCuffR = new THREE.Mesh(sleeveCuffL.geometry, innerMat);
+    sleeveCuffR.position.y = -0.14;
+    sleeveCuffR.castShadow = true;
+    forearmR.add(sleeveCuffR);
+    const handR = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), skinMat);
+    handR.position.y = -0.30;
+    forearmR.add(handR);
+
+    // ── Legs (hip pivot groups)
+    const legL = new THREE.Group();
+    legL.position.set(-0.13, -0.42, 0); // hip left
+    torso.add(legL);
+
+    const thighL = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.11, 0.10, 0.4, 8),
+      pantsMat
+    );
+    thighL.position.y = -0.20;
+    thighL.castShadow = true;
+    legL.add(thighL);
+
+    const shinL = new THREE.Group();
+    shinL.position.y = -0.40;
+    legL.add(shinL);
+    const calfL = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.10, 0.09, 0.35, 8),
+      pantsMat
+    );
+    calfL.position.y = -0.175;
+    calfL.castShadow = true;
+    shinL.add(calfL);
+    const footL = new THREE.Mesh(
+      new THREE.BoxGeometry(0.13, 0.07, 0.22),
+      bootMat
+    );
+    footL.position.set(0, -0.39, 0.04);
+    footL.castShadow = true;
+    shinL.add(footL);
+
+    // Right leg
+    const legR = new THREE.Group();
+    legR.position.set(0.13, -0.42, 0);
+    torso.add(legR);
+    const thighR = new THREE.Mesh(thighL.geometry, pantsMat);
+    thighR.position.y = -0.20;
+    thighR.castShadow = true;
+    legR.add(thighR);
+    const shinR = new THREE.Group();
+    shinR.position.y = -0.40;
+    legR.add(shinR);
+    const calfR = new THREE.Mesh(calfL.geometry, pantsMat);
+    calfR.position.y = -0.175;
+    calfR.castShadow = true;
+    shinR.add(calfR);
+    const footR = new THREE.Mesh(footL.geometry, bootMat);
+    footR.position.set(0, -0.39, 0.04);
+    footR.castShadow = true;
+    shinR.add(footR);
+
+    // ── Sword on left hip (katana in scabbard, angled)
+    const swordGroup = new THREE.Group();
+    swordGroup.position.set(-0.36, -0.05, 0.05);
+    swordGroup.rotation.z = 0.3;
+    swordGroup.rotation.y = -0.15;
+    torso.add(swordGroup);
+    // Saya (scabbard)
+    const saya = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.025, 0.022, 0.85, 8),
+      swordSaya
+    );
+    saya.rotation.z = Math.PI/2;
+    saya.position.set(0.4, 0, 0);
+    saya.castShadow = true;
+    swordGroup.add(saya);
+    // Tsuba (guard)
+    const tsuba = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.06, 0.06, 0.025, 8),
+      beltMat
+    );
+    tsuba.rotation.z = Math.PI/2;
+    tsuba.position.set(-0.04, 0, 0);
+    swordGroup.add(tsuba);
+    // Tsuka (handle)
+    const tsuka = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.028, 0.028, 0.18, 8),
+      swordHilt
+    );
+    tsuka.rotation.z = Math.PI/2;
+    tsuka.position.set(-0.13, 0, 0);
+    swordGroup.add(tsuka);
+
+    // ── Satchel on right hip
+    const satchel = new THREE.Mesh(
+      new THREE.BoxGeometry(0.18, 0.22, 0.12),
+      satchelMat
+    );
+    satchel.position.set(0.34, -0.1, -0.05);
+    satchel.castShadow = true;
+    torso.add(satchel);
+    // Strap
+    const strap = new THREE.Mesh(
+      new THREE.BoxGeometry(0.04, 0.5, 0.03),
+      satchelMat
+    );
+    strap.position.set(0.18, 0.18, 0.0);
+    strap.rotation.z = -0.4;
+    torso.add(strap);
+
+    // Position player at start, ON ground
     const groundAtStart = heightFn(startX, startZ);
-    player.position.set(startX, groundAtStart + 0.05, startZ);
+    player.position.set(startX, groundAtStart, startZ);
     scene.add(player);
 
     // ────────── Camera rig (TPS, slightly low angle for scale)
@@ -705,53 +1318,6 @@ function SceneAAA({ tweaks, active }) {
 
     // ────────── Postprocessing disabled (no external deps)
     let composer = null;
-    let bloomPass = null;
-    if (false && tweaks.cinematic && THREE.EffectComposer) {
-      composer = new THREE.EffectComposer(renderer);
-      // OutputColorSpace handling: r149 doesn't have OutputPass; do encoding via grade pass
-      composer.addPass(new THREE.RenderPass(scene, camera));
-      bloomPass = new THREE.UnrealBloomPass(
-        new THREE.Vector2(w, h),
-        palette.bloom,   // strength
-        0.7,             // radius
-        0.85,            // threshold (only highlights bloom)
-      );
-      composer.addPass(bloomPass);
-      // Color grading + vignette + subtle DoF (cheap depth-blur fake)
-      const gradePass = new THREE.ShaderPass({
-        uniforms: {
-          tDiffuse:{value:null},
-          warmTint:{value: new THREE.Color(0xffe0b8)},
-          coolTint:{value: new THREE.Color(0x9eb8d8)},
-          vignette:{value: 0.85},
-          saturate:{value: 1.08},
-        },
-        vertexShader:`varying vec2 vUv;
-          void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-        fragmentShader:`
-          uniform sampler2D tDiffuse;
-          uniform vec3 warmTint, coolTint;
-          uniform float vignette, saturate;
-          varying vec2 vUv;
-          void main(){
-            vec4 t = texture2D(tDiffuse, vUv);
-            vec3 c = t.rgb;
-            // Split-tone: warm highlights, cool shadows
-            float lum = dot(c, vec3(0.299, 0.587, 0.114));
-            c = mix(c * coolTint, c * warmTint, smoothstep(0.25, 0.85, lum));
-            // Saturate
-            vec3 g = vec3(dot(c, vec3(0.299,0.587,0.114)));
-            c = mix(g, c, saturate);
-            // Vignette (very subtle)
-            vec2 uv = vUv - 0.5;
-            float v = 1.0 - dot(uv, uv) * (1.0 - vignette) * 1.2;
-            c *= clamp(v, 0.0, 1.0);
-            gl_FragColor = vec4(c, t.a);
-          }`,
-      });
-      composer.addPass(gradePass);
-      gradePass.renderToScreen = true;
-    }
 
     // ────────── Input
     const move = { f:false, b:false, l:false, r:false, sprint:false };
@@ -886,6 +1452,60 @@ function SceneAAA({ tweaks, active }) {
         player.rotation.y += delta * Math.min(1, dt*10);
       }
 
+      // ═════════════════════════════════════════════════════════════════════
+      // 🎬 CHARACTER ANIMATION
+      // ═════════════════════════════════════════════════════════════════════
+      if (moving && camRig.grounded) {
+        // Walking / running cycle
+        const cycleSpeed = move.sprint ? 11 : 7;
+        const cyc = t * cycleSpeed;
+        const swingAmp = move.sprint ? 0.85 : 0.55;
+
+        // Legs swing opposite (sin-based)
+        legL.rotation.x = Math.sin(cyc) * swingAmp;
+        legR.rotation.x = -Math.sin(cyc) * swingAmp;
+        // Knee bend on lift (only when leg is forward)
+        shinL.rotation.x = Math.max(0, -Math.sin(cyc)) * 0.6;
+        shinR.rotation.x = Math.max(0, Math.sin(cyc)) * 0.6;
+
+        // Arms swing opposite to legs
+        armL.rotation.x = -Math.sin(cyc) * swingAmp * 0.8;
+        armR.rotation.x = Math.sin(cyc) * swingAmp * 0.8;
+        // Slight elbow bend forward
+        forearmL.rotation.x = Math.max(0, Math.sin(cyc)) * 0.4 + 0.15;
+        forearmR.rotation.x = Math.max(0, -Math.sin(cyc)) * 0.4 + 0.15;
+
+        // Torso slight side-to-side sway
+        torso.rotation.z = Math.sin(cyc) * 0.04;
+        torso.position.y = 0.85 + Math.abs(Math.sin(cyc*2)) * 0.04;
+
+        // Head bob slight
+        headGroup.rotation.x = Math.sin(cyc*2) * 0.03;
+      } else {
+        // Idle — gentle breathing + subtle sway
+        const idleT = t * 1.4;
+        const breath = Math.sin(idleT) * 0.5 + 0.5;
+        torso.position.y = 0.85 + Math.sin(idleT)*0.015;
+        torso.rotation.z = Math.sin(idleT*0.7) * 0.015;
+
+        // Smoothly lerp limbs back toward neutral
+        const ease = 1 - Math.exp(-dt*8);
+        legL.rotation.x += (0 - legL.rotation.x) * ease;
+        legR.rotation.x += (0 - legR.rotation.x) * ease;
+        shinL.rotation.x += (0 - shinL.rotation.x) * ease;
+        shinR.rotation.x += (0 - shinR.rotation.x) * ease;
+        // Idle pose: arms slightly out, hands relaxed
+        armL.rotation.x += (0.05 - armL.rotation.x) * ease;
+        armR.rotation.x += (0.05 - armR.rotation.x) * ease;
+        armL.rotation.z += (0.12 - armL.rotation.z) * ease;
+        armR.rotation.z += (-0.12 - armR.rotation.z) * ease;
+        forearmL.rotation.x += (0.2 - forearmL.rotation.x) * ease;
+        forearmR.rotation.x += (0.2 - forearmR.rotation.x) * ease;
+
+        headGroup.rotation.x += (Math.sin(idleT*0.5)*0.05 - headGroup.rotation.x) * ease;
+        headGroup.rotation.y += (Math.sin(idleT*0.3)*0.1 - headGroup.rotation.y) * ease;
+      }
+
       // Jump physics
       const ground = heightFn(player.position.x, player.position.z);
       if (!camRig.grounded) {
@@ -894,9 +1514,12 @@ function SceneAAA({ tweaks, active }) {
         if (player.position.y <= ground) {
           player.position.y = ground; camRig.vy = 0; camRig.grounded = true;
         }
+        // Tuck legs in air
+        legL.rotation.x = -0.4;
+        legR.rotation.x = -0.2;
       } else {
-        // Walking bob
-        player.position.y = ground + (moving ? Math.abs(Math.sin(t*8))*0.05 : 0);
+        // No bob added here — torso handles it
+        player.position.y = ground;
       }
 
       // Sun + shadow follow
@@ -940,7 +1563,11 @@ function SceneAAA({ tweaks, active }) {
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
       [terrGeo, bladeGeo, petalGeom, birdGeom].forEach(g=>g.dispose());
       M.forEach(L => { L.geom.dispose(); L.mat.dispose(); });
-      [terrMat, grassMat, skyMat, rockMat, bodyMat, cloakMat, cloudMat, birdMat].forEach(m=>m.dispose());
+      [terrMat, grassMat, skyMat, rockMat, cloudMat, birdMat,
+       skinMat, robeMat, innerMat, beltMat, pantsMat, bootMat,
+       hairMat, hatMat, swordHilt, swordSaya, satchelMat,
+       sakuraMat, sakuraTrunkMat, lanternStoneMat, lanternFireMat,
+      ].forEach(m=>m.dispose());
       petalMatPool.forEach(m=>m.dispose());
     };
   }, [tweaks.timeOfDay, tweaks.fpsPreset, tweaks.fogDensity, tweaks.windStrength, tweaks.cinematic]);
