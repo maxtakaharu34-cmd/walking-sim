@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Walking Sim — Open Skies</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html, body { margin:0; padding:0; height:100%; background:#000; overflow:hidden; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+  #stage { position:fixed; inset:0; }
+  canvas { display:block; }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="scene-aaa.jsx"></script>
+</head>
+<body>
+<div id="stage"></div>
+<script type="text/babel">
+const TWEAKS_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "timeOfDay": "afternoon",
+  "windStrength": 1.2,
+  "fogDensity": 1,
+  "showHUD": true,
+  "language": "ja",
+  "fpsPreset": "high",
+  "cinematic": true,
+  "demoMode": true
+}/*EDITMODE-END*/;
+
+function App() {
+  const [tweaks, setTweak] = useTweaks(TWEAKS_DEFAULTS);
+  return (
+    <>
+      <SceneAAA tweaks={tweaks} active={true} />
+      <TweaksPanel title="Tweaks">
+        <TweakSection title="World">
+          <TweakRadio label="時間帯" value={tweaks.timeOfDay}
+            onChange={(v)=>setTweak('timeOfDay', v)}
+            options={[
+              { value:'dawn',      label:'朝' },
+              { value:'noon',      label:'昼' },
+              { value:'afternoon', label:'夕方前' },
+              { value:'dusk',      label:'夕' },
+              { value:'night',     label:'夜' },
+            ]}/>
+          <TweakSlider label="風の強さ" value={tweaks.windStrength}
+            min={0} max={2} step={0.1}
+            onChange={(v)=>setTweak('windStrength', v)} />
+          <TweakSlider label="霧の濃さ" value={tweaks.fogDensity}
+            min={0} max={2} step={0.1}
+            onChange={(v)=>setTweak('fogDensity', v)} />
+        </TweakSection>
+        <TweakSection title="Cinema">
+          <TweakToggle label="シネマティック後処理" value={tweaks.cinematic}
+            onChange={(v)=>setTweak('cinematic', v)} />
+          <TweakToggle label="自動巡回カメラ" value={tweaks.demoMode}
+            onChange={(v)=>setTweak('demoMode', v)} />
+        </TweakSection>
+        <TweakSection title="UI">
+          <TweakToggle label="HUDを表示" value={tweaks.showHUD}
+            onChange={(v)=>setTweak('showHUD', v)} />
+          <TweakRadio label="言語" value={tweaks.language}
+            onChange={(v)=>setTweak('language', v)}
+            options={[{value:'ja',label:'日本語'},{value:'en',label:'English'}]} />
+        </TweakSection>
+        <TweakSection title="Performance">
+          <TweakRadio label="描画品質" value={tweaks.fpsPreset}
+            onChange={(v)=>setTweak('fpsPreset', v)}
+            options={[
+              { value:'low',      label:'低' },
+              { value:'balanced', label:'中' },
+              { value:'high',     label:'高' },
+            ]}/>
+        </TweakSection>
+      </TweaksPanel>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('stage')).render(<App/>);
+</script>
+</body>
+</html>
